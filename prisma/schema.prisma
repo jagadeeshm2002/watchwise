@@ -25,6 +25,13 @@ model User {
   sessions      Session[]
   accounts      Account[]
 
+  totalForksCreated   Int @default(0)
+  totalCoursesCreated Int @default(0)
+
+  coursesCreated Course[]         @relation("CreatedCourses")
+  reviews        Review[]
+  forkedCourses  UserCourseFork[]
+
   @@unique([email])
   @@map("user")
 }
@@ -72,4 +79,346 @@ model Verification {
   updatedAt  DateTime?
 
   @@map("verification")
+}
+
+// Enhanced schema with fork support and RAG features
+
+model Course {
+  id          String  @id @default(cuid())
+  courseCode  String  @unique
+  playlistId  String? // YouTube course ID (nullable for user-created courses)
+  title       String
+  description String? @db.Text
+  slug        String  @unique
+
+  // Creator Info
+  creatorId   String
+  creatorName String
+
+  // Fork Management
+  parentCourseId String? // Reference to original course if this is a fork
+  isOriginal     Boolean @default(true) // true for YouTube imports, false for forks
+  forkCount      Int     @default(0) // Number of times this has been forked
+
+  // Course Status
+  status CourseStatus @default(DRAFT)
+  level  CourseLevel  @default(BEGINNER)
+
+  // Course Metadata 
+  tags             Json? // Array of tags
+  totalEnrollments Int     @default(0)
+  averageRating    Float?  @default(0)
+  prerequisites    String? @db.Text
+  learningOutcomes Json? // Array of learning objectives
+  language         String  @default("English")
+
+  // Privacy & Sharing
+  visibility CourseVisibility @default(PUBLIC)
+
+  // Timestamps
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  // Relations
+  videos       Video[]
+  reviews      Review[]
+  createdBy    User             @relation("CreatedCourses", fields: [creatorId], references: [id], onDelete: Cascade)
+  parentCourse Course?          @relation("CourseForks", fields: [parentCourseId], references: [id])
+  forks        Course[]         @relation("CourseForks")
+  userForks    UserCourseFork[]
+
+  // FIXED: Add the missing relation for originalCourse
+  originalForUserForks UserCourseFork[] @relation("OriginalCourse")
+
+  @@index([creatorId])
+  @@index([status])
+  @@index([courseCode])
+  @@index([parentCourseId])
+  @@index([visibility])
+  @@map("courses")
+}
+
+model Video {
+  id          String   @id @default(cuid())
+  videoId     String? // YouTube video ID (nullable for user-uploaded content)
+  courseId    String // Foreign key to course
+  title       String
+  description String   @db.Text
+  publishedAt DateTime
+  position    Int // Position/order in course
+
+  // Video Source Type
+  sourceType VideoSourceType @default(YOUTUBE)
+
+  // Channel Info (for YouTube videos)
+  videoOwnerChannelTitle String?
+  videoOwnerChannelId    String?
+
+  // Media
+  thumbnailUrl String
+  duration     String? // Duration format (PT4M13S for YouTube, seconds for others)
+
+  // Video URLs
+  videoUrl String // Main video URL
+  embedUrl String? // Embed URL if different
+
+  // Custom Video Fields (for user uploads)
+  customVideoUrl String? // For user-provided video links
+  notes          String? @db.Text // User's personal notes on this video
+
+  // Fork-specific modifications
+  isModified      Boolean @default(false) // Has this video been modified from original?
+  originalVideoId String? // Reference to original video if this is a modified version
+
+  // RAG Features (Future)
+  hasTranscript    Boolean          @default(false)
+  transcriptStatus TranscriptStatus @default(PENDING)
+  hasEmbeddings    Boolean          @default(false)
+  embeddingStatus  EmbeddingStatus  @default(PENDING)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  course        Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  transcripts   VideoTranscript[]
+  embeddings    VideoEmbedding[]
+  originalVideo Video?            @relation("VideoModifications", fields: [originalVideoId], references: [id])
+  modifications Video[]           @relation("VideoModifications")
+
+  @@index([courseId])
+  @@index([videoId])
+  @@index([position])
+  @@index([sourceType])
+  @@index([originalVideoId])
+  @@map("videos")
+}
+
+// New model to track user's forked courses with their modifications
+model UserCourseFork {
+  id               String @id @default(cuid())
+  userId           String
+  courseId         String // The forked course
+  originalCourseId String // The original course that was forked
+
+  // User's custom modifications
+  customTitle       String?
+  customDescription String? @db.Text
+  customTags        Json?
+
+  // Fork metadata
+  forkReason   String?   @db.Text // Why user forked this
+  isActive     Boolean   @default(true) // Is user still maintaining this fork
+  lastSyncedAt DateTime? // Last time synced with original (if applicable)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course         Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  originalCourse Course @relation("OriginalCourse", fields: [originalCourseId], references: [id])
+
+  @@unique([userId, courseId])
+  @@map("user_course_forks")
+}
+
+// RAG Feature Models
+model VideoTranscript {
+  id      String @id @default(cuid())
+  videoId String
+
+  // Transcript content
+  fullTranscript String @db.Text
+  language       String @default("en")
+
+  // Transcript metadata
+  source     TranscriptSource @default(AUTO_GENERATED)
+  confidence Float? // AI confidence score if auto-generated
+  wordCount  Int?
+
+  // Timestamps and segments
+  timestampedSegments Json? // Array of {start, end, text} objects
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([videoId])
+  @@map("video_transcripts")
+}
+
+// model VideoEmbedding {
+//   id      String @id @default(cuid())
+//   videoId String
+
+//   // Vector database references instead of storing vectors directly
+//   vectorId       String // ID in vector database (Pinecone, Weaviate, Qdrant, etc.)
+//   embeddingModel String // Model used (e.g., "text-embedding-3-small")
+//   dimensions     Int    // Vector dimensions
+
+//   // Vector database info
+//   vectorNamespace String? // Namespace/collection in vector DB
+//   vectorMetadata  Json?   // Additional metadata stored with vector
+
+//   // Chunking information
+//   chunkIndex     Int    // Which chunk this embedding represents
+//   chunkText      String @db.Text // The text that was embedded
+//   chunkStartTime Float? // Start time in video (seconds)
+//   chunkEndTime   Float? // End time in video (seconds)
+
+//   // Metadata for search
+//   contentType EmbeddingContentType @default(TRANSCRIPT)
+
+//   // Vector processing status
+//   vectorStatus VectorStatus @default(PENDING)
+
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+
+//   // Relations
+//   video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+//   @@index([videoId])
+//   @@index([chunkIndex])
+//   @@index([vectorId]) // Index for vector database lookups
+//   @@map("video_embeddings")
+// }
+
+model VideoEmbedding {
+  id      String @id @default(cuid())
+  videoId String
+
+  // PostgreSQL with pgvector extension support
+  embedding      Unsupported("vector(1536)")? // pgvector type for similarity search
+  embeddingModel String
+  dimensions     Int
+
+  // Chunking information
+  chunkIndex     Int
+  chunkText      String @db.Text
+  chunkStartTime Float?
+  chunkEndTime   Float?
+
+  // Metadata for search
+  contentType EmbeddingContentType @default(TRANSCRIPT)
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([videoId])
+  @@index([chunkIndex])
+  // Note: Would need custom vector similarity indexes in PostgreSQL
+  @@map("video_embeddings")
+}
+
+// Additional enum for vector processing status
+enum VectorStatus {
+  PENDING // Vector not yet created
+  PROCESSING // Currently generating/uploading vector
+  STORED // Vector successfully stored in vector DB
+  FAILED // Failed to create/store vector
+  OUTDATED // Vector needs to be regenerated
+}
+
+enum EmbeddingContentType {
+  TRANSCRIPT // Embedding from video transcript
+  DESCRIPTION // Embedding from video description
+  TITLE // Embedding from video title
+  COMMENTS // Embedding from video comments
+  SUMMARY // AI-generated summary embedding
+  KEYWORDS // Key topics/tags embedding
+}
+
+model Review {
+  id       String  @id @default(cuid())
+  userId   String
+  courseId String
+  rating   Int // 1-5
+  comment  String? @db.Text
+
+  // Review metadata
+  isVerifiedUser Boolean @default(false)
+  helpfulVotes   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@map("reviews")
+}
+
+// Enums
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  SUSPENDED
+}
+
+enum CourseVisibility {
+  PUBLIC // Anyone can view and fork
+  UNLISTED // Only with link
+  PRIVATE // Only creator can view
+}
+
+enum VideoSourceType {
+  YOUTUBE // YouTube video
+  VIMEO // Vimeo video
+  CUSTOM_URL // User-provided video URL
+  UPLOAD // User uploaded video
+}
+
+enum TranscriptStatus {
+  PENDING // Not yet processed
+  PROCESSING // Currently being generated
+  COMPLETED // Transcript ready
+  FAILED // Failed to generate
+  MANUAL_REVIEW // Needs human review
+}
+
+enum EmbeddingStatus {
+  PENDING // Not yet processed
+  PROCESSING // Currently generating embeddings
+  COMPLETED // Embeddings ready
+  FAILED // Failed to generate
+}
+
+enum TranscriptSource {
+  AUTO_GENERATED // AI-generated transcript
+  MANUAL // Human-created transcript
+  YOUTUBE_CC // YouTube closed captions
+  UPLOADED // User uploaded transcript
+}
+
+// NEW: Additional enums for enrollment system
+enum EnrollmentStatus {
+  ACTIVE // Currently enrolled and studying
+  COMPLETED // Finished the course
+  PAUSED // Temporarily paused
+  DROPPED // User dropped out
+  EXPIRED // Enrollment expired (if applicable)
+}
+
+enum SyncType {
+  MANUAL // User manually synced
+  AUTOMATIC // System auto-synced
+  MERGE // Merged changes from original
 }
