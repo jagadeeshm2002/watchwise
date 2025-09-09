@@ -31,6 +31,8 @@ model User {
   coursesCreated Course[]         @relation("CreatedCourses")
   reviews        Review[]
   forkedCourses  UserCourseFork[]
+  enrollments    Enrollment[]
+  videoProgress  VideoProgress[]
 
   @@unique([email])
   @@map("user")
@@ -121,12 +123,14 @@ model Course {
   publishedAt DateTime?
 
   // Relations
-  videos       Video[]
-  reviews      Review[]
-  createdBy    User             @relation("CreatedCourses", fields: [creatorId], references: [id], onDelete: Cascade)
-  parentCourse Course?          @relation("CourseForks", fields: [parentCourseId], references: [id])
-  forks        Course[]         @relation("CourseForks")
-  userForks    UserCourseFork[]
+  videos        Video[]
+  reviews       Review[]
+  createdBy     User             @relation("CreatedCourses", fields: [creatorId], references: [id], onDelete: Cascade)
+  parentCourse  Course?          @relation("CourseForks", fields: [parentCourseId], references: [id])
+  forks         Course[]         @relation("CourseForks")
+  userForks     UserCourseFork[]
+  enrollments   Enrollment[]
+  videoProgress VideoProgress[]
 
   // FIXED: Add the missing relation for originalCourse
   originalForUserForks UserCourseFork[] @relation("OriginalCourse")
@@ -182,11 +186,12 @@ model Video {
   updatedAt DateTime @updatedAt
 
   // Relations
-  course        Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  transcripts   VideoTranscript[]
-  embeddings    VideoEmbedding[]
-  originalVideo Video?            @relation("VideoModifications", fields: [originalVideoId], references: [id])
-  modifications Video[]           @relation("VideoModifications")
+  course        Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // transcripts   VideoTranscript[]
+  // embeddings    VideoEmbedding[]
+  originalVideo Video?          @relation("VideoModifications", fields: [originalVideoId], references: [id])
+  modifications Video[]         @relation("VideoModifications")
+  progress      VideoProgress[]
 
   @@index([courseId])
   @@index([videoId])
@@ -194,6 +199,37 @@ model Video {
   @@index([sourceType])
   @@index([originalVideoId])
   @@map("videos")
+}
+
+model VideoProgress {
+  id           String @id @default(cuid())
+  enrollmentId String
+  videoId      String
+  userId       String
+  courseId     String
+
+  watchedDuration Float   @default(0)
+  totalDuration   Float?
+  progressPercent Float   @default(0)
+  currentPosition Float   @default(0)
+  isCompleted     Boolean @default(false)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastWatchedAt DateTime  @default(now())
+  completedAt   DateTime?
+
+  watchCount Int @default(1)
+
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  video      Video      @relation(fields: [videoId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+  Course     Course     @relation(fields: [courseId], references: [id])
+
+  @@unique([enrollmentId, videoId])
+  @@index([userId])
+  @@index([videoId])
+  @@index([enrollmentId])
 }
 
 // New model to track user's forked courses with their modifications
@@ -225,32 +261,55 @@ model UserCourseFork {
   @@map("user_course_forks")
 }
 
-// RAG Feature Models
-model VideoTranscript {
-  id      String @id @default(cuid())
-  videoId String
+model Enrollment {
+  id       String @id @default(cuid())
+  userId   String
+  courseId String
 
-  // Transcript content
-  fullTranscript String @db.Text
-  language       String @default("en")
+  createdAt    DateTime         @default(now())
+  status       EnrollmentStatus @default(ACTIVE)
+  progress     Float            @default(0)
+  completedAt  DateTime?
+  lastAccessAt DateTime?
 
-  // Transcript metadata
-  source     TranscriptSource @default(AUTO_GENERATED)
-  confidence Float? // AI confidence score if auto-generated
-  wordCount  Int?
+  user          User            @relation(fields: [userId], references: [id])
+  course        Course          @relation(fields: [courseId], references: [id])
+  VideoProgress VideoProgress[]
 
-  // Timestamps and segments
-  timestampedSegments Json? // Array of {start, end, text} objects
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
-
-  @@index([videoId])
-  @@map("video_transcripts")
+  // Prevent duplicate enrollments
+  @@unique([userId, courseId])
+  // Performance indexes
+  @@index([userId])
+  @@index([courseId])
+  @@index([status])
 }
+
+// // RAG Feature Models
+// model VideoTranscript {
+//   id      String @id @default(cuid())
+//   videoId String
+
+//   // Transcript content
+//   fullTranscript String @db.Text
+//   language       String @default("en")
+
+//   // Transcript metadata
+//   source     TranscriptSource @default(AUTO_GENERATED)
+//   confidence Float? // AI confidence score if auto-generated
+//   wordCount  Int?
+
+//   // Timestamps and segments
+//   timestampedSegments Json? // Array of {start, end, text} objects
+
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+
+//   // Relations
+//   video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+//   @@index([videoId])
+//   @@map("video_transcripts")
+// }
 
 // model VideoEmbedding {
 //   id      String @id @default(cuid())
@@ -289,52 +348,52 @@ model VideoTranscript {
 //   @@map("video_embeddings")
 // }
 
-model VideoEmbedding {
-  id      String @id @default(cuid())
-  videoId String
+// model VideoEmbedding {
+//   id      String @id @default(cuid())
+//   videoId String
 
-  // PostgreSQL with pgvector extension support
-  embedding      Unsupported("vector(1536)")? // pgvector type for similarity search
-  embeddingModel String
-  dimensions     Int
+//   // PostgreSQL with pgvector extension support
+//   embedding      Unsupported("vector(1536)")? // pgvector type for similarity search
+//   embeddingModel String
+//   dimensions     Int
 
-  // Chunking information
-  chunkIndex     Int
-  chunkText      String @db.Text
-  chunkStartTime Float?
-  chunkEndTime   Float?
+//   // Chunking information
+//   chunkIndex     Int
+//   chunkText      String @db.Text
+//   chunkStartTime Float?
+//   chunkEndTime   Float?
 
-  // Metadata for search
-  contentType EmbeddingContentType @default(TRANSCRIPT)
+//   // Metadata for search
+//   contentType EmbeddingContentType @default(TRANSCRIPT)
 
-  createdAt DateTime @default(now())
+//   createdAt DateTime @default(now())
 
-  // Relations
-  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+//   // Relations
+//   video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
 
-  @@index([videoId])
-  @@index([chunkIndex])
-  // Note: Would need custom vector similarity indexes in PostgreSQL
-  @@map("video_embeddings")
-}
+//   @@index([videoId])
+//   @@index([chunkIndex])
+//   // Note: Would need custom vector similarity indexes in PostgreSQL
+//   @@map("video_embeddings")
+// }
 
-// Additional enum for vector processing status
-enum VectorStatus {
-  PENDING // Vector not yet created
-  PROCESSING // Currently generating/uploading vector
-  STORED // Vector successfully stored in vector DB
-  FAILED // Failed to create/store vector
-  OUTDATED // Vector needs to be regenerated
-}
+// // Additional enum for vector processing status
+// enum VectorStatus {
+//   PENDING // Vector not yet created
+//   PROCESSING // Currently generating/uploading vector
+//   STORED // Vector successfully stored in vector DB
+//   FAILED // Failed to create/store vector
+//   OUTDATED // Vector needs to be regenerated
+// }
 
-enum EmbeddingContentType {
-  TRANSCRIPT // Embedding from video transcript
-  DESCRIPTION // Embedding from video description
-  TITLE // Embedding from video title
-  COMMENTS // Embedding from video comments
-  SUMMARY // AI-generated summary embedding
-  KEYWORDS // Key topics/tags embedding
-}
+// enum EmbeddingContentType {
+//   TRANSCRIPT // Embedding from video transcript
+//   DESCRIPTION // Embedding from video description
+//   TITLE // Embedding from video title
+//   COMMENTS // Embedding from video comments
+//   SUMMARY // AI-generated summary embedding
+//   KEYWORDS // Key topics/tags embedding
+// }
 
 model Review {
   id       String  @id @default(cuid())

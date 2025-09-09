@@ -28,12 +28,15 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarMenuButton,
+  SidebarMenu,
+  SidebarMenuItem,
   SidebarRail,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import Image from "next/image";
-import Home from "@/app/page";
+
+import { CreatePlaylistDialog } from "@/components/course/create-playlist-dialog";
 
 // This is sample data.
 const data = {
@@ -46,15 +49,12 @@ const data = {
   navMain: [
     {
       title: "For You",
-      url: "#",
+      url: "/",
       icon: Sparkles,
     },
-    {
-      title: "Create playlist",
-      url: "#",
-      icon: Plus,
-    },
-  
+    { title: "Explore", url: "/explore", icon: Search },
+    { title: "Learning", url: "/learning", icon: PieChart },
+    { title: "My Courses", url: "/my-courses", icon: BookOpen },
   ],
 };
 
@@ -78,6 +78,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
+        <SidebarMenu className="px-2 mt-2">
+          <SidebarMenuItem>
+            <CreatePlaylistDialog>
+              <SidebarMenuButton asChild>
+                <button type="button">
+                  <Plus />
+                  <span>Create playlist</span>
+                </button>
+              </SidebarMenuButton>
+            </CreatePlaylistDialog>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarContent>
 
       <SidebarRail />

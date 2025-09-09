@@ -1,0 +1,537 @@
+import React, { useRef, useEffect, useState } from 'react';
+import videojs from 'video.js';
+import 'video.js/dist/video-js.css';
+import 'videojs-youtube';
+import { Play, Pause, Volume2, VolumeX } from 'lucide-react';
+
+const VideoJSPlayer = ({ youtubeUrl }) => {
+  const videoRef = useRef(null);
+  const playerRef = useRef(null);
+  
+  useEffect(() => {
+    if (!playerRef.current && videoRef.current) {
+      const videoId = extractVideoId(youtubeUrl);
+      
+      const player = videojs(videoRef.current, {
+        controls: false,
+        responsive: true,
+        fluid: true,
+        techOrder: ['youtube'],
+        sources: [{
+          type: 'video/youtube',
+          src: `https://www.youtube.com/watch?v=${videoId}`
+        }],
+        youtube: {
+          ytControls: 0
+        }
+      });
+
+      playerRef.current = player;
+    }
+
+    return () => {
+      if (playerRef.current) {
+        playerRef.current.dispose();
+        playerRef.current = null;
+      }
+    };
+  }, [youtubeUrl]);
+
+const VideoJSYouTubePlayer = () => {
+  const videoRef = useRef(null);
+  const playerRef = useRef(null);
+  const progressRef = useRef(null);
+  
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [youtubeUrl, setYoutubeUrl] = useState('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Analytics/Monitoring state
+  const [analytics, setAnalytics] = useState({
+    totalPlayTime: 0,
+    pauseCount: 0,
+    seekCount: 0,
+    watchPercentage: 0,
+    lastPlayTime: 0,
+    startTime: Date.now()
+  });
+
+  const extractVideoId = (url) => {
+    const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+    const match = url.match(regex);
+    return match ? match[1] : null;
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadVideoJS = async () => {
+      try {
+        // Load Video.js CSS
+        const existingCSS = document.querySelector('link[href*="video-js.css"]');
+        if (!existingCSS) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = 'https://vjs.zencdn.net/8.6.1/video-js.css';
+          document.head.appendChild(link);
+        }
+
+        // Load Video.js
+        const videojsScript = document.createElement('script');
+        videojsScript.src = 'https://vjs.zencdn.net/8.6.1/video.min.js';
+        
+        videojsScript.onload = async () => {
+          // Load YouTube plugin
+          const youtubeScript = document.createElement('script');
+          youtubeScript.src = 'https://cdn.jsdelivr.net/npm/videojs-youtube@3.0.1/dist/Youtube.min.js';
+          
+          youtubeScript.onload = () => {
+            if (mounted) {
+              initializePlayer();
+            }
+          };
+          
+          youtubeScript.onerror = () => {
+            console.error('Failed to load YouTube plugin');
+            setIsLoading(false);
+          };
+          
+          document.body.appendChild(youtubeScript);
+        };
+
+        videojsScript.onerror = () => {
+          console.error('Failed to load Video.js');
+          setIsLoading(false);
+        };
+
+        document.body.appendChild(videojsScript);
+      } catch (error) {
+        console.error('Error loading scripts:', error);
+        setIsLoading(false);
+      }
+    };
+
+    const initializePlayer = () => {
+      if (!mounted || !videoRef.current || !window.videojs) {
+        return;
+      }
+
+      try {
+        const videoId = extractVideoId(youtubeUrl);
+        if (!videoId) {
+          console.error('Invalid YouTube URL');
+          setIsLoading(false);
+          return;
+        }
+
+        // Dispose existing player
+        if (playerRef.current) {
+          playerRef.current.dispose();
+        }
+
+        const player = window.videojs(videoRef.current, {
+          controls: false,
+          responsive: true,
+          fluid: true,
+          fill: true,
+          techOrder: ['youtube'],
+          sources: [{
+            type: 'video/youtube',
+            src: `https://www.youtube.com/watch?v=${videoId}`
+          }],
+          youtube: {
+            ytControls: 0,
+            modestbranding: 1,
+            rel: 0,
+            showinfo: 0,
+            iv_load_policy: 3,
+            playsinline: 1
+          }
+        });
+
+        // Wait for player to be ready
+        player.ready(() => {
+          if (!mounted) return;
+          setIsLoading(false);
+          console.log('Player is ready');
+        });
+
+        // Event listeners
+        player.on('loadedmetadata', () => {
+          if (!mounted) return;
+          const dur = player.duration();
+          if (dur && dur > 0) {
+            setDuration(dur);
+          }
+        });
+
+        player.on('durationchange', () => {
+          if (!mounted) return;
+          const dur = player.duration();
+          if (dur && dur > 0) {
+            setDuration(dur);
+          }
+        });
+
+        player.on('play', () => {
+          if (!mounted) return;
+          setIsPlaying(true);
+          setAnalytics(prev => ({
+            ...prev,
+            lastPlayTime: Date.now()
+          }));
+        });
+
+        player.on('pause', () => {
+          if (!mounted) return;
+          setIsPlaying(false);
+          setAnalytics(prev => {
+            const playTime = prev.lastPlayTime ? (Date.now() - prev.lastPlayTime) / 1000 : 0;
+            return {
+              ...prev,
+              pauseCount: prev.pauseCount + 1,
+              totalPlayTime: prev.totalPlayTime + playTime
+            };
+          });
+        });
+
+        player.on('timeupdate', () => {
+          if (!mounted) return;
+          const current = player.currentTime();
+          const dur = player.duration();
+          
+          if (current >= 0) {
+            setCurrentTime(current);
+          }
+          
+          if (dur > 0) {
+            const percentage = (current / dur) * 100;
+            setAnalytics(prev => ({
+              ...prev,
+              watchPercentage: Math.max(prev.watchPercentage, percentage)
+            }));
+          }
+        });
+
+        player.on('seeking', () => {
+          if (!mounted) return;
+          setAnalytics(prev => ({
+            ...prev,
+            seekCount: prev.seekCount + 1
+          }));
+        });
+
+        player.on('volumechange', () => {
+          if (!mounted) return;
+          setVolume(player.volume());
+          setIsMuted(player.muted());
+        });
+
+        player.on('fullscreenchange', () => {
+          if (!mounted) return;
+          setIsFullscreen(player.isFullscreen());
+        });
+
+        player.on('error', (e) => {
+          console.error('Player error:', e);
+          setIsLoading(false);
+        });
+
+        playerRef.current = player;
+      } catch (error) {
+        console.error('Error initializing player:', error);
+        setIsLoading(false);
+      }
+    };
+
+    loadVideoJS();
+
+    return () => {
+      mounted = false;
+      if (playerRef.current) {
+        try {
+          playerRef.current.dispose();
+          playerRef.current = null;
+        } catch (error) {
+          console.error('Error disposing player:', error);
+        }
+      }
+    };
+  }, [youtubeUrl]);
+
+  const togglePlay = () => {
+    if (playerRef.current) {
+      try {
+        if (isPlaying) {
+          playerRef.current.pause();
+        } else {
+          playerRef.current.play();
+        }
+      } catch (error) {
+        console.error('Error toggling play:', error);
+      }
+    }
+  };
+
+  const toggleMute = () => {
+    if (playerRef.current) {
+      try {
+        playerRef.current.muted(!isMuted);
+      } catch (error) {
+        console.error('Error toggling mute:', error);
+      }
+    }
+  };
+
+  const handleVolumeChange = (e) => {
+    const newVolume = parseFloat(e.target.value);
+    if (playerRef.current) {
+      try {
+        playerRef.current.volume(newVolume);
+      } catch (error) {
+        console.error('Error changing volume:', error);
+      }
+    }
+  };
+
+  const handleProgressClick = (e) => {
+    if (playerRef.current && progressRef.current && duration > 0) {
+      try {
+        const rect = progressRef.current.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const width = rect.width;
+        const percentage = Math.max(0, Math.min(1, clickX / width));
+        const newTime = percentage * duration;
+        playerRef.current.currentTime(newTime);
+      } catch (error) {
+        console.error('Error seeking:', error);
+      }
+    }
+  };
+
+  const seek = (seconds) => {
+    if (playerRef.current && duration > 0) {
+      try {
+        const newTime = Math.max(0, Math.min(currentTime + seconds, duration));
+        playerRef.current.currentTime(newTime);
+      } catch (error) {
+        console.error('Error seeking:', error);
+      }
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (playerRef.current) {
+      try {
+        if (isFullscreen) {
+          playerRef.current.exitFullscreen();
+        } else {
+          playerRef.current.requestFullscreen();
+        }
+      } catch (error) {
+        console.error('Error toggling fullscreen:', error);
+      }
+    }
+  };
+
+  const formatTime = (time) => {
+    if (!time || time < 0) return '0:00';
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const handleUrlChange = (e) => {
+    setYoutubeUrl(e.target.value);
+    setIsLoading(true);
+    setAnalytics({
+      totalPlayTime: 0,
+      pauseCount: 0,
+      seekCount: 0,
+      watchPercentage: 0,
+      lastPlayTime: 0,
+      startTime: Date.now()
+    });
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto p-4 bg-gray-900 text-white rounded-lg">
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-2">YouTube URL:</label>
+        <input
+          type="text"
+          value={youtubeUrl}
+          onChange={handleUrlChange}
+          className="w-full p-2 rounded bg-gray-800 text-white border border-gray-600 focus:border-red-500 focus:outline-none"
+          placeholder="https://www.youtube.com/watch?v=..."
+        />
+      </div>
+
+      <div className="relative bg-black rounded-lg overflow-hidden" style={{ aspectRatio: '16/9' }}>
+        {/* Loading Indicator */}
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black">
+            <div className="text-white">Loading video...</div>
+          </div>
+        )}
+
+        {/* Video Player */}
+        <div data-vjs-player className="w-full h-full">
+          <video
+            ref={videoRef}
+            className="video-js vjs-default-skin w-full h-full"
+            playsInline
+            data-setup='{}'
+          />
+        </div>
+
+        {/* Custom Controls Overlay */}
+        {!isLoading && (
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/50 to-transparent p-4">
+            {/* Progress Bar */}
+            <div 
+              ref={progressRef}
+              className="w-full h-2 bg-gray-600 rounded cursor-pointer mb-3 hover:h-3 transition-all"
+              onClick={handleProgressClick}
+            >
+              <div 
+                className="h-full bg-red-500 rounded transition-all"
+                style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+              />
+            </div>
+
+            {/* Control Buttons */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                {/* Play/Pause */}
+                <button 
+                  onClick={togglePlay} 
+                  className="text-white hover:text-red-400 transition-colors p-1"
+                  disabled={isLoading}
+                >
+                  {isPlaying ? <Pause size={24} /> : <Play size={24} />}
+                </button>
+
+                {/* Seek Backward */}
+                <button 
+                  onClick={() => seek(-10)} 
+                  className="text-white hover:text-red-400 transition-colors p-1"
+                  disabled={isLoading}
+                >
+                  <RotateCcw size={20} />
+                </button>
+
+                {/* Seek Forward */}
+                <button 
+                  onClick={() => seek(10)} 
+                  className="text-white hover:text-red-400 transition-colors p-1"
+                  disabled={isLoading}
+                >
+                  <RotateCw size={20} />
+                </button>
+
+                {/* Volume Controls */}
+                <div className="flex items-center space-x-2">
+                  <button 
+                    onClick={toggleMute} 
+                    className="text-white hover:text-red-400 transition-colors p-1"
+                    disabled={isLoading}
+                  >
+                    {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    value={isMuted ? 0 : volume}
+                    onChange={handleVolumeChange}
+                    className="w-20 accent-red-500"
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-4">
+                {/* Time Display */}
+                <span className="text-sm font-mono">
+                  {formatTime(currentTime)} / {formatTime(duration)}
+                </span>
+
+                {/* Fullscreen */}
+                <button 
+                  onClick={toggleFullscreen} 
+                  className="text-white hover:text-red-400 transition-colors p-1"
+                  disabled={isLoading}
+                >
+                  <Maximize size={20} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Analytics Dashboard */}
+      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-gray-800 p-4 rounded-lg">
+          <div className="text-xs text-gray-400 uppercase tracking-wide">Total Play Time</div>
+          <div className="text-2xl font-bold text-red-400">{Math.round(analytics.totalPlayTime)}s</div>
+        </div>
+        <div className="bg-gray-800 p-4 rounded-lg">
+          <div className="text-xs text-gray-400 uppercase tracking-wide">Pause Count</div>
+          <div className="text-2xl font-bold text-blue-400">{analytics.pauseCount}</div>
+        </div>
+        <div className="bg-gray-800 p-4 rounded-lg">
+          <div className="text-xs text-gray-400 uppercase tracking-wide">Seek Count</div>
+          <div className="text-2xl font-bold text-green-400">{analytics.seekCount}</div>
+        </div>
+        <div className="bg-gray-800 p-4 rounded-lg">
+          <div className="text-xs text-gray-400 uppercase tracking-wide">Watch Progress</div>
+          <div className="text-2xl font-bold text-purple-400">{Math.round(analytics.watchPercentage)}%</div>
+        </div>
+      </div>
+
+      {/* Real-time Stats */}
+      <div className="mt-6 bg-gray-800 p-4 rounded-lg">
+        <h3 className="text-lg font-semibold mb-3 text-red-400">Real-time Monitoring</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <span className="text-gray-400">Current Time:</span>
+            <div className="font-mono text-white">{formatTime(currentTime)}</div>
+          </div>
+          <div>
+            <span className="text-gray-400">Volume:</span>
+            <div className="font-mono text-white">{Math.round(volume * 100)}%</div>
+          </div>
+          <div>
+            <span className="text-gray-400">Status:</span>
+            <div className={`font-semibold ${isPlaying ? 'text-green-400' : 'text-yellow-400'}`}>
+              {isLoading ? 'Loading' : isPlaying ? 'Playing' : 'Paused'}
+            </div>
+          </div>
+          <div>
+            <span className="text-gray-400">Fullscreen:</span>
+            <div className="font-semibold text-white">{isFullscreen ? 'Yes' : 'No'}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Instructions */}
+      <div className="mt-4 text-sm text-gray-400">
+        <p><strong>Instructions:</strong> This player uses Video.js with the YouTube plugin loaded via CDN. 
+        For production use, install the packages:</p>
+        <code className="block mt-2 p-2 bg-gray-800 rounded text-xs">
+          npm install video.js videojs-youtube
+        </code>
+      </div>
+    </div>
+  );
+};
+
+export default VideoJSYouTubePlayer;
